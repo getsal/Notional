@@ -5,6 +5,7 @@ export default {
 	createEmptyPage: jest.fn(),
 	retrievePage: jest.fn(),
 	updatePageProperties: jest.fn(),
+	mapNotionPropertiesToFrontmatter: jest.fn(),
 	retrievePageMarkdown: jest.fn(),
 	uploadFileContent: jest.fn(),
 };

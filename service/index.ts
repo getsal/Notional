@@ -9,6 +9,10 @@ import {
 } from "./types";
 import notion from "./notion";
 import {
+	downloadNotionAttachment,
+	imageAttachmentMarkdown,
+} from "./attachments";
+import {
 	updateNotionPageUrlWithWorkspaceId,
 	fromYamlFrontMatterToMarkdown,
 	createNotionPageMentionUrl,
@@ -256,7 +260,25 @@ export const pullFileFromNotion = async (
 
 	const notionPageResult = await notion.retrievePageMarkdown(
 		plugin.settings,
-		notionPageId
+		notionPageId,
+		async (url, blockId, caption, page) => {
+			if (
+				!options.force &&
+				hasNotionChangesSinceLastSync(contentWithFrontMatter, page) &&
+				hasLocalChangesSinceLastSync(file, contentWithFrontMatter)
+			) {
+				return null;
+			}
+			const attachment = await downloadNotionAttachment(
+				plugin.app,
+				file,
+				blockId,
+				url
+			);
+			return attachment
+				? imageAttachmentMarkdown(plugin.app, file, attachment, caption)
+				: null;
+		}
 	);
 	if (notionPageResult.error) return notionPageResult;
 
@@ -278,10 +300,47 @@ export const pullFileFromNotion = async (
 		};
 	}
 
+	const pulledFrontmatter: MarkdownWithFrontMatter = {
+		...contentWithFrontMatter,
+		...notion.mapNotionPropertiesToFrontmatter(
+			page,
+			contentWithFrontMatter
+		),
+	};
+	const cover = page.cover as
+		| {
+				type?: string;
+				external?: { url?: string };
+				file?: { url?: string };
+		  }
+		| undefined;
+	let pulledCover: string | undefined;
+	if (cover?.type === "external" && cover.external?.url) {
+		try {
+			const url = new URL(cover.external.url);
+			if (url.protocol === "https:" || url.protocol === "http:") {
+				pulledCover = cover.external.url;
+			}
+		} catch {
+			// Ignore malformed remote cover URLs and preserve the local value.
+		}
+	} else if (cover?.type === "file" && cover.file?.url) {
+		const attachment = await downloadNotionAttachment(
+			plugin.app,
+			file,
+			`cover-${page.id ?? notionPageId}`,
+			cover.file.url
+		);
+		if (attachment) pulledCover = attachment.path;
+	}
+	const mergedFrontmatter = pulledCover
+		? { ...pulledFrontmatter, cover: pulledCover }
+		: pulledFrontmatter;
+
 	await updateSyncMetadata(
 		plugin,
 		file,
-		contentWithFrontMatter,
+		mergedFrontmatter,
 		page,
 		markdown
 	);

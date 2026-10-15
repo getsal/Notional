@@ -7,6 +7,7 @@ import { markdownToBlocks } from "@tryfabric/martian";
 import { requestUrl } from "obsidian";
 import notion, {
 	mapFrontmatterToNotionProperties,
+	mapNotionPropertiesToFrontmatter,
 } from "../service/notion";
 import { MarkdownWithFrontMatter, PluginSettings } from "../service/types";
 import { parseFrontMatter } from "../service/utils";
@@ -98,6 +99,78 @@ describe("Notion frontmatter properties", () => {
 		});
 	});
 
+	it("maps populated Notion properties back to existing frontmatter keys", () => {
+		const frontMatter = {
+			__content: "Body",
+			lang: "en",
+			concept_id: "old-id",
+			extra: "keep",
+	} as MarkdownWithFrontMatter;
+		const updates = mapNotionPropertiesToFrontmatter(
+			{
+				properties: {
+					"Concept ID": {
+						rich_text: [{ plain_text: "concept-7" }],
+					},
+					Language: { select: { name: "EN" } },
+					Type: { select: { name: "Concept" } },
+					Status: { select: { name: "Published" } },
+					Category: {
+						select: { name: "Command Line & Scripting" },
+					},
+					"Community Publish": { checkbox: false },
+					tags: {
+						multi_select: [{ name: "cli" }, { name: "scripting" }],
+					},
+				},
+			},
+			frontMatter
+		);
+
+		expect(updates).toEqual({
+			concept_id: "concept-7",
+			type: "concept",
+			status: "Published",
+			category: "Command Line & Scripting",
+			community_publish: false,
+			tags: ["cli", "scripting"],
+		});
+		expect(updates.extra).toBeUndefined();
+	});
+
+	it("maps the lang alias to the Language property", () => {
+		expect(
+			mapFrontmatterToNotionProperties({
+				__content: "Body",
+				lang: "en",
+			} as MarkdownWithFrontMatter)
+		).toEqual({ Language: { select: { name: "EN" } } });
+	});
+
+	it("preserves local values for empty Notion properties and omits unchanged values", () => {
+		const frontMatter = {
+			__content: "Body",
+			language: "en",
+			category: "Local category",
+			tags: ["local"],
+		};
+		const page = {
+			properties: {
+				Language: { select: { name: "EN" } },
+				Category: { select: null },
+				tags: { multi_select: [] },
+				Type: { select: null },
+			},
+		};
+
+		expect(
+			mapNotionPropertiesToFrontmatter(
+				page as never,
+				frontMatter
+			)
+		).toEqual({});
+	});
+
 	it("does not send a Notion update when all mapped fields are absent", async () => {
 		const result = await notion.updatePageProperties(
 			{ ...settings, allowTags: true },
@@ -140,6 +213,22 @@ describe("Notion frontmatter properties", () => {
 				}),
 			})
 		);
+	});
+
+	it("pushes an explicit HTTPS cover but leaves an absent cover untouched", async () => {
+		(requestUrl as jest.Mock).mockResolvedValueOnce({ json: { id: "page-id" } });
+		const result = await notion.updatePageProperties(settings, "page-id", {
+			__content: "Body",
+			cover: "https://images.example.test/cover.png",
+		});
+
+		expect(result.error).toBeNull();
+		expect(JSON.parse((requestUrl as jest.Mock).mock.calls[0][0].body)).toEqual({
+			cover: {
+				type: "external",
+				external: { url: "https://images.example.test/cover.png" },
+			},
+		});
 	});
 });
 
@@ -626,6 +715,64 @@ describe("notion.retrievePageMarkdown rich blocks", () => {
 		expect(result.data.markdown).toContain("> [!note] Note text");
 		expect(result.data.markdown).toContain("$$x^2$$");
 		expect(result.data.markdown).not.toContain("[!missing]");
+	});
+
+	it("localizes Notion-hosted image blocks and preserves external image URLs", async () => {
+		(requestUrl as jest.Mock)
+			.mockResolvedValueOnce({
+				json: { id: "page-id", last_edited_time: "2024-01-01T00:00:00.000Z" },
+			})
+			.mockResolvedValueOnce({
+				json: {
+					results: [
+						{
+							id: "notion-image-block",
+							type: "image",
+							has_children: false,
+							image: {
+								type: "file",
+								file: { url: "https://files.example.test/signed.png" },
+								caption: [{ plain_text: "Infographic" }],
+							},
+						},
+						{
+							id: "external-image-block",
+							type: "image",
+							has_children: false,
+							image: {
+								type: "external",
+								external: { url: "https://static.example.test/permanent.png" },
+							},
+						},
+					],
+					has_more: false,
+					next_cursor: null,
+				},
+			});
+		const resolveImage = jest
+			.fn()
+			.mockResolvedValue("![Infographic](../../attachments/notion-image.png)");
+
+		const result = await notion.retrievePageMarkdown(
+			settings,
+			"page-id",
+			resolveImage
+		);
+
+		expect(result.error).toBeNull();
+		expect(resolveImage).toHaveBeenCalledWith(
+			"https://files.example.test/signed.png",
+			"notion-image-block",
+			"Infographic",
+			{ id: "page-id", last_edited_time: "2024-01-01T00:00:00.000Z" }
+		);
+		expect(resolveImage).toHaveBeenCalledTimes(1);
+		expect(result.data.markdown).toContain(
+			"![Infographic](../../attachments/notion-image.png)"
+		);
+		expect(result.data.markdown).toContain(
+			"![](https://static.example.test/permanent.png)"
+		);
 	});
 
 	it("reconstructs bold, italic, strikethrough, and inline code annotations", async () => {

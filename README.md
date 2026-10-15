@@ -235,8 +235,8 @@ npm test
 
 ### Frontmatter database properties
 
-When you Push a note linked with `notionPageId`, Notional updates these
-database properties from matching YAML frontmatter fields:
+When you Push or Pull a note linked with `notionPageId`, Notional synchronizes
+these database properties with matching YAML frontmatter fields:
 
 | Frontmatter | Notion property | Type |
 | --- | --- | --- |
@@ -246,14 +246,28 @@ database properties from matching YAML frontmatter fields:
 | `status` | Status | Select |
 | `category` | Category | Select |
 | `community_publish` | Community Publish | Checkbox |
+| `tags` | `tags` | Multi-select (when **Convert tags** is enabled) |
 
-Only fields present in the note are sent; absent fields leave their Notion
-properties unchanged. `en` is normalized to the `EN` Language option, and
-`concept` to the `Concept` Type option. Other Select values are sent as written.
-Checkbox values must be YAML booleans (`true` or `false`). This runs during an
-explicit Push and does not change Pull behavior or enable automatic sync.
-The optional **Convert tags** setting also transfers the lowercase YAML
-`tags` property to the lowercase Notion `tags` multi-select property.
+`lang` is accepted as an alias for `language`; Pull updates the alias already
+used in the note, or creates `language` when neither exists. Only non-empty
+Notion values are pulled, so empty remote properties do not erase local values.
+Unrelated frontmatter and Notional's page ID and sync metadata are preserved.
+`en` is normalized to the `EN` Language option, and `concept` to the `Concept`
+Type option. Other Select values are sent as written and pulled as returned.
+Checkbox values must be YAML booleans (`true` or `false`). Absent fields are not
+sent on Push. Tag conversion is controlled by **Convert tags** and uses the
+lowercase Obsidian `tags` field and Notion `tags` multi-select property.
+
+On Pull, Notion-hosted image blocks are downloaded to the vault's configured
+attachment location. A stable block-based filename lets later pulls reuse the
+same file; external image URLs remain remote, and image order and captions are
+preserved. A failed or expired download falls back to the URL returned by
+Notion, which may itself expire.
+
+An explicit HTTP(S) `cover` frontmatter URL is sent to Notion on Push. A missing
+or local `cover` value leaves the Notion cover unchanged. Pull stores external
+covers as URLs and downloads Notion-hosted covers into the configured
+attachment location. Category-based cover fallback is not enabled.
 
 The destination database must contain the mapped property names with the types
 above. Select options must already exist in that database; Notional does not

@@ -243,6 +243,60 @@ describe("pullFileFromNotion", () => {
 		);
 	});
 
+	it("pulls remote properties and cover into frontmatter while preserving unrelated fields", async () => {
+		jest.clearAllMocks();
+		const pluginMock = new NObsidian(new App(), {} as PluginManifest);
+		const fileMock = new TFile();
+		fileMock.basename = "Get-Variable.en";
+		fileMock.stat.mtime = Date.parse("2024-01-01T00:00:00.000Z");
+		(pluginMock.getContent as jest.Mock).mockResolvedValueOnce({
+			__content: "Local body",
+			notionPageId: "page-id",
+			notionPageUrl: "https://www.notion.so/page-id",
+			notionLastEditedTime: "2024-01-01T00:00:00.000Z",
+			obsidianLastSyncedAt: "2024-01-01T00:00:00.000Z",
+			customField: "keep-this",
+		});
+		(notion.retrievePageMarkdown as jest.Mock).mockResolvedValueOnce({
+			data: {
+				page: {
+					id: "page-id",
+					last_edited_time: "2024-01-02T00:00:00.000Z",
+					properties: {},
+					cover: {
+						type: "external",
+						external: {
+							url: "https://images.example.test/cover.png",
+						},
+					},
+				},
+				markdown: "Pulled body with [[existing wikilink]]",
+			},
+			error: null,
+		});
+		(notion.mapNotionPropertiesToFrontmatter as jest.Mock).mockReturnValueOnce(
+			{
+				category: "Command Line & Scripting",
+				type: "concept",
+				language: "en",
+				tags: ["PowerShell"],
+			}
+		);
+
+		const result = await pullFileFromNotion(pluginMock, fileMock);
+
+		expect(result.error).toBeNull();
+		const written = (pluginMock.updateMarkdownFile as jest.Mock).mock
+			.calls[0][1] as string;
+		expect(written).toContain("category: Command Line & Scripting");
+		expect(written).toContain("type: concept");
+		expect(written).toContain("language: en");
+		expect(written).toContain("customField: keep-this");
+		expect(written).toContain("notionPageId: page-id");
+		expect(written).toContain("cover: https://images.example.test/cover.png");
+		expect(written).toContain("Pulled body with [[existing wikilink]]");
+	});
+
 	it("preserves the note's own front matter when pulling", async () => {
 		(pluginMock.getContent as jest.Mock).mockResolvedValueOnce({
 			__content: "Local body",

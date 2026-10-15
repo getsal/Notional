@@ -48,12 +48,21 @@ type NotionRichText = {
 };
 
 type NotionMedia = {
+	type?: "file" | "external";
 	url?: string;
 	name?: string;
 	caption?: NotionRichText[];
 	external?: { url?: string };
 	file?: { url?: string };
+	notionLocalMarkdown?: string;
 };
+
+export type NotionImageResolver = (
+	url: string,
+	blockId: string,
+	caption: string,
+	page: NotionPage
+) => Promise<string | null>;
 
 type RichTextHolder = { rich_text?: NotionRichText[] };
 
@@ -429,6 +438,7 @@ const blockToMarkdown = (block: NotionBlock): string => {
 			return "---";
 		case "image": {
 			const image = block.image;
+			if (image?.notionLocalMarkdown) return image.notionLocalMarkdown;
 			const url = image?.external?.url || image?.file?.url || "";
 			const caption = richTextToMarkdown(image?.caption);
 			return url ? `![${caption}](${url})` : "";
@@ -518,6 +528,36 @@ const blocksToMarkdown = (blocks: NotionBlock[]): string => {
 	return parts.join("");
 };
 
+const localizeNotionImages = async (
+	blocks: NotionBlock[],
+	resolveImage: NotionImageResolver,
+	page: NotionPage
+): Promise<void> => {
+	for (const block of blocks) {
+		if (block.type === "image" && block.image?.type === "file") {
+			const url = block.image.file?.url;
+			if (url) {
+				try {
+					block.image.notionLocalMarkdown =
+						(await resolveImage(
+							url,
+							block.id ?? "",
+							richTextToMarkdown(block.image.caption),
+							page
+							)) ?? undefined;
+				} catch {
+					// Keep the original Notion URL when an image cannot be downloaded.
+				}
+			}
+		}
+
+		const children = getBlockChildren(block);
+		if (children.length > 0) {
+			await localizeNotionImages(children, resolveImage, page);
+		}
+	}
+};
+
 const retrievePage = async (
 	settings: PluginSettings,
 	notionPageId: string
@@ -566,11 +606,17 @@ export const mapFrontmatterToNotionProperties = (
 	const properties: Record<string, unknown> = {};
 
 	for (const mapping of FRONTMATTER_PROPERTY_MAPPINGS) {
-		if (!Object.prototype.hasOwnProperty.call(frontMatter, mapping.field)) {
+		const sourceField =
+			mapping.field === "language" &&
+			typeof frontMatter.language !== "string" &&
+			typeof frontMatter.lang === "string"
+				? "lang"
+				: mapping.field;
+		if (!Object.prototype.hasOwnProperty.call(frontMatter, sourceField)) {
 			continue;
 		}
 
-		const value = frontMatter[mapping.field];
+		const value = frontMatter[sourceField];
 		if (value === undefined || value === null) continue;
 
 		if (mapping.type === "rich_text") {
@@ -615,6 +661,132 @@ export const mapFrontmatterToNotionProperties = (
 	return properties;
 };
 
+const NOTION_PROPERTY_MAPPINGS = [
+	{ frontmatter: "concept_id", property: "Concept ID", type: "rich_text" },
+	{ frontmatter: "language", property: "Language", type: "select" },
+	{ frontmatter: "type", property: "Type", type: "select" },
+	{ frontmatter: "status", property: "Status", type: "select" },
+	{ frontmatter: "category", property: "Category", type: "select" },
+	{
+		frontmatter: "community_publish",
+		property: "Community Publish",
+		type: "checkbox",
+	},
+] as const;
+
+const FROM_NOTION_SELECT_ALIASES: Record<
+	string,
+	Record<string, string>
+> = {
+	language: { en: "en" },
+	type: { concept: "concept" },
+};
+
+const notionPropertyValue = (
+	property: unknown,
+	type: "rich_text" | "select" | "checkbox"
+): string | boolean | null => {
+	if (!property || typeof property !== "object") return null;
+	const value = property as Record<string, unknown>;
+
+	if (type === "rich_text") {
+		if (!Array.isArray(value.rich_text)) return null;
+		const text = value.rich_text
+			.map((part) => {
+				if (!part || typeof part !== "object") return "";
+				const richText = part as Record<string, unknown>;
+				if (typeof richText.plain_text === "string") {
+					return richText.plain_text;
+				}
+				const nested = richText.text as
+					| { content?: unknown }
+					| undefined;
+				return typeof nested?.content === "string" ? nested.content : "";
+			})
+			.join("");
+		return text || null;
+	}
+
+	if (type === "select") {
+		const select = value.select as { name?: unknown } | null | undefined;
+		return typeof select?.name === "string" && select.name.trim()
+			? select.name
+			: null;
+	}
+
+	return typeof value.checkbox === "boolean" ? value.checkbox : null;
+};
+
+const sameFrontmatterValue = (
+	current: string | string[] | number | boolean | null | undefined,
+	remote: string | string[] | number | boolean
+): boolean => {
+	if (Array.isArray(current) && Array.isArray(remote)) {
+		return (
+			current.length === remote.length &&
+			current.every((value, index) => value === remote[index])
+		);
+	}
+	return current === remote;
+};
+
+/** Merge supported Notion properties into frontmatter without clearing empty values. */
+export const mapNotionPropertiesToFrontmatter = (
+	page: NotionPage,
+	frontMatter: MarkdownWithFrontMatter
+): Record<string, string | string[] | boolean> => {
+	const properties = page.properties as Record<string, unknown> | undefined;
+	if (!properties) return {};
+
+	const updates: Record<string, string | string[] | boolean> = {};
+	for (const mapping of NOTION_PROPERTY_MAPPINGS) {
+		const remote = notionPropertyValue(
+			properties[mapping.property],
+			mapping.type
+		);
+		if (remote === null || remote === "") continue;
+
+		let value: string | boolean = remote;
+		if (typeof remote === "string" && mapping.type === "select") {
+			value =
+				FROM_NOTION_SELECT_ALIASES[mapping.frontmatter]?.[
+					remote.toLowerCase()
+				] ?? remote;
+		}
+
+		const frontmatterKeys =
+			mapping.frontmatter === "language"
+				? [
+						...(Object.prototype.hasOwnProperty.call(frontMatter, "language")
+							? ["language"]
+							: []),
+						...(Object.prototype.hasOwnProperty.call(frontMatter, "lang")
+							? ["lang"]
+							: []),
+					]
+				: [mapping.frontmatter];
+		if (frontmatterKeys.length === 0) frontmatterKeys.push("language");
+
+		for (const key of frontmatterKeys) {
+			if (!sameFrontmatterValue(frontMatter[key], value)) {
+				updates[key] = value;
+			}
+		}
+	}
+
+	const notionTags = properties.tags as
+		| { multi_select?: { name?: unknown }[] }
+		| undefined;
+	const tags = notionTags?.multi_select
+		?.map((tag) => tag.name)
+		.filter((tag): tag is string => typeof tag === "string");
+	if (tags?.length && !sameFrontmatterValue(frontMatter.tags, tags)) {
+		updates.tags = tags;
+	}
+
+	return updates;
+};
+
 const updatePageProperties = async (
 	settings: PluginSettings,
 	notionPageId: string,
@@ -624,7 +796,22 @@ const updatePageProperties = async (
 		frontMatter,
 		settings.allowTags
 	);
-	if (Object.keys(properties).length === 0) {
+	const body: Record<string, unknown> = {};
+	if (Object.keys(properties).length > 0) body.properties = properties;
+	if (typeof frontMatter.cover === "string") {
+		try {
+			const coverUrl = new URL(frontMatter.cover);
+			if (coverUrl.protocol === "https:" || coverUrl.protocol === "http:") {
+				body.cover = {
+					type: "external",
+					external: { url: coverUrl.toString() },
+				};
+			}
+		} catch {
+			// Ignore local paths and malformed cover values.
+		}
+	}
+	if (Object.keys(body).length === 0) {
 		return { data: null, error: null };
 	}
 
@@ -634,7 +821,7 @@ const updatePageProperties = async (
 			url: `https://api.notion.com/v1/pages/${notionPageId}`,
 			method: "PATCH",
 			headers: getJsonHeaders(settings),
-			body: JSON.stringify({ properties }),
+			body: JSON.stringify(body),
 		});
 		return { data: res.json ?? null, error: null };
 	} catch (error) {
@@ -697,7 +884,8 @@ const retrieveBlockChildren = async (
 
 const retrievePageMarkdown = async (
 	settings: PluginSettings,
-	notionPageId: string
+	notionPageId: string,
+	resolveImage?: NotionImageResolver
 ): Promise<ServiceResult<NotionPageMarkdown>> => {
 	const pageResult = await retrievePage(settings, notionPageId);
 	if (pageResult.error) {
@@ -707,6 +895,13 @@ const retrievePageMarkdown = async (
 	const childrenResult = await retrieveBlockChildren(settings, notionPageId);
 	if (childrenResult.error) {
 		return errorResult(childrenResult.data, childrenResult.error);
+	}
+	if (resolveImage) {
+		await localizeNotionImages(
+			childrenResult.data,
+			resolveImage,
+			pageResult.data
+		);
 	}
 
 	return {
@@ -946,6 +1141,7 @@ const notion = {
 	createEmptyPage,
 	retrievePage,
 	updatePageProperties,
+	mapNotionPropertiesToFrontmatter,
 	retrievePageMarkdown,
 	uploadFileContent,
 };
