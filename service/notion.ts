@@ -24,6 +24,7 @@ import { markdownToBlocks } from "@tryfabric/martian";
 import {
 	NotionPage,
 	NotionPageMarkdown,
+	MarkdownWithFrontMatter,
 	PluginSettings,
 	ServiceResult,
 } from "./types";
@@ -539,6 +540,88 @@ const retrievePage = async (
 	}
 };
 
+const FRONTMATTER_PROPERTY_MAPPINGS = [
+	{ field: "concept_id", property: "Concept ID", type: "rich_text" },
+	{ field: "language", property: "Language", type: "select" },
+	{ field: "type", property: "Type", type: "select" },
+	{ field: "status", property: "Status", type: "select" },
+	{ field: "category", property: "Category", type: "select" },
+	{
+		field: "community_publish",
+		property: "Community Publish",
+		type: "checkbox",
+	},
+] as const;
+
+const SELECT_OPTION_ALIASES: Record<string, Record<string, string>> = {
+	language: { en: "EN" },
+	type: { concept: "Concept" },
+};
+
+/** Convert the supported Obsidian fields into Notion page property values. */
+export const mapFrontmatterToNotionProperties = (
+	frontMatter: MarkdownWithFrontMatter
+): Record<string, unknown> => {
+	const properties: Record<string, unknown> = {};
+
+	for (const mapping of FRONTMATTER_PROPERTY_MAPPINGS) {
+		if (!Object.prototype.hasOwnProperty.call(frontMatter, mapping.field)) {
+			continue;
+		}
+
+		const value = frontMatter[mapping.field];
+		if (value === undefined || value === null) continue;
+
+		if (mapping.type === "rich_text") {
+			if (typeof value !== "string" && typeof value !== "number") continue;
+			const text = String(value);
+			properties[mapping.property] = {
+				rich_text: text ? [{ text: { content: text } }] : [],
+			};
+		} else if (mapping.type === "select") {
+			if (typeof value !== "string") continue;
+			const option = value.trim();
+			const normalized =
+				SELECT_OPTION_ALIASES[mapping.field]?.[option.toLowerCase()] ??
+				option;
+			properties[mapping.property] = {
+				select: normalized ? { name: normalized } : null,
+			};
+		} else if (typeof value === "boolean") {
+			properties[mapping.property] = { checkbox: value };
+		}
+	}
+
+	return properties;
+};
+
+const updatePageProperties = async (
+	settings: PluginSettings,
+	notionPageId: string,
+	frontMatter: MarkdownWithFrontMatter
+): Promise<ServiceResult> => {
+	const properties = mapFrontmatterToNotionProperties(frontMatter);
+	if (Object.keys(properties).length === 0) {
+		return { data: null, error: null };
+	}
+
+	let res: RequestUrlResponse | null = null;
+	try {
+		res = await notionRequest({
+			url: `https://api.notion.com/v1/pages/${notionPageId}`,
+			method: "PATCH",
+			headers: getJsonHeaders(settings),
+			body: JSON.stringify({ properties }),
+		});
+		return { data: res.json ?? null, error: null };
+	} catch (error) {
+		return errorResult(
+			res,
+			Error(`Error updating Notion page properties: ${error}`)
+		);
+	}
+};
+
 const retrieveBlockChildren = async (
 	settings: PluginSettings,
 	blockId: string
@@ -839,6 +922,7 @@ const notion = {
 	createDatabase,
 	createEmptyPage,
 	retrievePage,
+	updatePageProperties,
 	retrievePageMarkdown,
 	uploadFileContent,
 };

@@ -52,7 +52,13 @@ export type BooleanKeys<T> = Exclude<
 >;
 
 export type MarkdownWithFrontMatter = {
-	readonly [key: string]: string | string[] | undefined;
+	readonly [key: string]:
+		| string
+		| string[]
+		| number
+		| boolean
+		| null
+		| undefined;
 	readonly __content: string;
 	notionPageId?: string;
 	notionPageUrl?: string;

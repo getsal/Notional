@@ -4,6 +4,7 @@ export default {
 	createDatabase: jest.fn(),
 	createEmptyPage: jest.fn(),
 	retrievePage: jest.fn(),
+	updatePageProperties: jest.fn(),
 	retrievePageMarkdown: jest.fn(),
 	uploadFileContent: jest.fn(),
 };

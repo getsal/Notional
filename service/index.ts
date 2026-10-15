@@ -34,6 +34,13 @@ export const uploadFile = async (
 	);
 
 	if (contentWithFrontMatter.notionPageId) {
+		const propertyResult = await notion.updatePageProperties(
+			plugin.settings,
+			contentWithFrontMatter.notionPageId,
+			contentWithFrontMatter
+		);
+		if (propertyResult.error) return propertyResult;
+
 		const uploadResult = await notion.uploadFileContent(
 			plugin.settings,
 			contentWithFrontMatter.notionPageId,

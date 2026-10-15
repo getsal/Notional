@@ -5,8 +5,10 @@ jest.mock("@tryfabric/martian", () => ({
 
 import { markdownToBlocks } from "@tryfabric/martian";
 import { requestUrl } from "obsidian";
-import notion from "../service/notion";
-import { PluginSettings } from "../service/types";
+import notion, {
+	mapFrontmatterToNotionProperties,
+} from "../service/notion";
+import { MarkdownWithFrontMatter, PluginSettings } from "../service/types";
 
 const settings: PluginSettings = {
 	notionAPIToken: "secret",
@@ -48,6 +50,78 @@ const getPatchBodies = () =>
 	(requestUrl as jest.Mock).mock.calls
 		.filter(([options]) => options.method === "PATCH")
 		.map(([options]) => JSON.parse(options.body));
+
+describe("Notion frontmatter properties", () => {
+	beforeEach(() => {
+		jest.clearAllMocks();
+	});
+
+	it("maps supported fields, normalizes known options, and ignores unmapped fields", () => {
+		const properties = mapFrontmatterToNotionProperties({
+			__content: "Note body",
+			concept_id: "C-123",
+			language: "en",
+			type: "concept",
+			status: "published",
+			category: "Research",
+			community_publish: false,
+			Featured: true,
+			"Display Order": 5,
+			"Last Synced": "yesterday",
+		} as MarkdownWithFrontMatter);
+
+		expect(properties).toEqual({
+			"Concept ID": { rich_text: [{ text: { content: "C-123" } }] },
+			Language: { select: { name: "EN" } },
+			Type: { select: { name: "Concept" } },
+			Status: { select: { name: "published" } },
+			Category: { select: { name: "Research" } },
+			"Community Publish": { checkbox: false },
+		});
+	});
+
+	it("does not send a Notion update when all mapped fields are absent", async () => {
+		const result = await notion.updatePageProperties(
+			settings,
+			"page-id",
+			{ __content: "Body", Featured: true } as MarkdownWithFrontMatter
+		);
+
+		expect(result.error).toBeNull();
+		expect(requestUrl).not.toHaveBeenCalled();
+	});
+
+	it("patches only present mapped properties on the linked page", async () => {
+		(requestUrl as jest.Mock).mockResolvedValueOnce({ json: { id: "page-id" } });
+		const frontMatter = {
+			__content: "Body",
+		notionPageId: "page-id",
+			language: "en",
+			community_publish: true,
+			Featured: true,
+		} as MarkdownWithFrontMatter;
+
+		const result = await notion.updatePageProperties(
+			settings,
+			"page-id",
+			frontMatter
+		);
+
+		expect(result.error).toBeNull();
+		expect(requestUrl).toHaveBeenCalledWith(
+			expect.objectContaining({
+				url: "https://api.notion.com/v1/pages/page-id",
+				method: "PATCH",
+				body: JSON.stringify({
+					properties: {
+						Language: { select: { name: "EN" } },
+						"Community Publish": { checkbox: true },
+					},
+				}),
+			})
+		);
+	});
+});
 
 describe("notion.uploadFileContent", () => {
 	beforeEach(() => {

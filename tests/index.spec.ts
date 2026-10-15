@@ -7,6 +7,7 @@ import {
 	initializeNotionPage,
 	pullFileFromNotion,
 	runWithConcurrency,
+	uploadFile,
 } from "../service/index";
 import notion from "../service/notion";
 
@@ -78,6 +79,56 @@ describe("initializeNotionPage", () => {
 		expect(pluginMock.updateMarkdownFile).toHaveBeenCalledTimes(1);
 		expect(results[0].notionPageId).toBe("shared-page-id");
 		expect(results[1].notionPageId).toBe("shared-page-id");
+	});
+});
+
+describe("uploadFile frontmatter properties", () => {
+	it("updates mapped properties on the existing notionPageId during Push", async () => {
+		jest.clearAllMocks();
+		const pluginMock = new NObsidian(new App(), {} as PluginManifest);
+		const fileMock = new TFile();
+		fileMock.basename = "Mapped note";
+		(pluginMock.getContent as jest.Mock).mockResolvedValueOnce({
+			__content: "Body",
+			notionPageId: "existing-page-id",
+			language: "en",
+			community_publish: true,
+		});
+		(notion.updatePageProperties as jest.Mock).mockResolvedValueOnce({
+			data: null,
+			error: null,
+		});
+		(notion.uploadFileContent as jest.Mock).mockResolvedValueOnce({
+			data: null,
+			error: null,
+		});
+		(notion.retrievePage as jest.Mock).mockResolvedValueOnce({
+			data: {
+				id: "existing-page-id",
+				url: "https://www.notion.so/existing-page-id",
+				last_edited_time: "2024-01-02T00:00:00.000Z",
+			},
+			error: null,
+		});
+
+		const result = await uploadFile(pluginMock, fileMock);
+
+		expect(result.error).toBeNull();
+		expect(notion.updatePageProperties).toHaveBeenCalledWith(
+			pluginMock.settings,
+			"existing-page-id",
+			expect.objectContaining({
+				notionPageId: "existing-page-id",
+				language: "en",
+				community_publish: true,
+			})
+		);
+		expect(notion.createEmptyPage).not.toHaveBeenCalled();
+		expect(notion.uploadFileContent).toHaveBeenCalledWith(
+			pluginMock.settings,
+			"existing-page-id",
+			"Body"
+		);
 	});
 });
 

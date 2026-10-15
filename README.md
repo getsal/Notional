@@ -233,6 +233,31 @@ npm run lint
 npm test
 ```
 
+### Frontmatter database properties
+
+When you Push a note linked with `notionPageId`, Notional updates these
+database properties from matching YAML frontmatter fields:
+
+| Frontmatter | Notion property | Type |
+| --- | --- | --- |
+| `concept_id` | Concept ID | Rich text |
+| `language` | Language | Select |
+| `type` | Type | Select |
+| `status` | Status | Select |
+| `category` | Category | Select |
+| `community_publish` | Community Publish | Checkbox |
+
+Only fields present in the note are sent; absent fields leave their Notion
+properties unchanged. `en` is normalized to the `EN` Language option, and
+`concept` to the `Concept` Type option. Other Select values are sent as written.
+Checkbox values must be YAML booleans (`true` or `false`). This runs during an
+explicit Push and does not change Pull behavior or enable automatic sync.
+
+The destination database must contain the mapped property names with the types
+above. Select options must already exist in that database; Notional does not
+create or rename database properties or options. If a database is missing a
+mapped property or option, Notion can reject that property update.
+
 Release assets are `main.js`, `manifest.json`, and `styles.css`. Tagging a commit whose name matches the `manifest.json` version (no `v` prefix) publishes a GitHub release with those assets and build-provenance attestations.
 
 ## FAQ
