@@ -427,7 +427,7 @@ export class NObsidianSettingTab extends PluginSettingTab {
 
 		this.createToggleSetting(containerEl, {
 			name: "Convert tags (optional)",
-			desc: "Transfer Obsidian tags to the Notion table. Requires a 'Tags' column in Notion.",
+			desc: "Transfer Obsidian's lowercase tags frontmatter property to the lowercase tags multi-select property in Notion.",
 			settingKey: "allowTags",
 		});
 	}

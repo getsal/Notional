@@ -9,6 +9,7 @@ import notion, {
 	mapFrontmatterToNotionProperties,
 } from "../service/notion";
 import { MarkdownWithFrontMatter, PluginSettings } from "../service/types";
+import { parseFrontMatter } from "../service/utils";
 
 const settings: PluginSettings = {
 	notionAPIToken: "secret",
@@ -80,9 +81,26 @@ describe("Notion frontmatter properties", () => {
 		});
 	});
 
+	it("maps lowercase Obsidian tags to lowercase Notion multi-select only when enabled", () => {
+		const frontMatter = {
+			__content: "Note body",
+			tags: ["planning", "project/example"],
+		} as MarkdownWithFrontMatter;
+
+		expect(mapFrontmatterToNotionProperties(frontMatter)).toEqual({});
+		expect(mapFrontmatterToNotionProperties(frontMatter, true)).toEqual({
+			tags: {
+				multi_select: [
+					{ name: "planning" },
+					{ name: "project/example" },
+				],
+			},
+		});
+	});
+
 	it("does not send a Notion update when all mapped fields are absent", async () => {
 		const result = await notion.updatePageProperties(
-			settings,
+			{ ...settings, allowTags: true },
 			"page-id",
 			{ __content: "Body", Featured: true } as MarkdownWithFrontMatter
 		);
@@ -93,16 +111,12 @@ describe("Notion frontmatter properties", () => {
 
 	it("patches only present mapped properties on the linked page", async () => {
 		(requestUrl as jest.Mock).mockResolvedValueOnce({ json: { id: "page-id" } });
-		const frontMatter = {
-			__content: "Body",
-		notionPageId: "page-id",
-			language: "en",
-			community_publish: true,
-			Featured: true,
-		} as MarkdownWithFrontMatter;
+		const frontMatter = parseFrontMatter(
+			"---\nlanguage: en\ncommunity_publish: true\ntags:\n  - engineering\n  - how-to\nFeatured: true\n---\nBody"
+		);
 
 		const result = await notion.updatePageProperties(
-			settings,
+			{ ...settings, allowTags: true },
 			"page-id",
 			frontMatter
 		);
@@ -116,6 +130,12 @@ describe("Notion frontmatter properties", () => {
 					properties: {
 						Language: { select: { name: "EN" } },
 						"Community Publish": { checkbox: true },
+						tags: {
+							multi_select: [
+								{ name: "engineering" },
+								{ name: "how-to" },
+							],
+						},
 					},
 				}),
 			})
@@ -422,6 +442,33 @@ describe("notion.createDatabase", () => {
 		expect(body.parent.page_id).toBe("parent-page-id");
 		expect(body.title[0].text.content).toBe("Obsidian Notes");
 		expect(body.properties.Name.title).toBeDefined();
+		expect(body.properties.tags.multi_select).toBeDefined();
+		expect(body.properties.Tags).toBeUndefined();
+	});
+});
+
+describe("notion.createEmptyPage", () => {
+	beforeEach(() => jest.clearAllMocks());
+
+	it("uses the lowercase tags property and includes supplied tags when enabled", async () => {
+		(requestUrl as jest.Mock).mockResolvedValueOnce({
+			json: { id: "page-id", url: "https://www.notion.so/page-id" },
+		});
+
+		const result = await notion.createEmptyPage(
+			{ ...settings, allowTags: true },
+			"Tagged note",
+			["planning", "project/example"]
+		);
+
+		expect(result.error).toBeNull();
+		const request = (requestUrl as jest.Mock).mock.calls[0][0];
+		const body = JSON.parse(request.body);
+		expect(body.properties.tags.multi_select).toEqual([
+			{ name: "planning" },
+			{ name: "project/example" },
+		]);
+		expect(body.properties.Tags).toBeUndefined();
 	});
 });
 

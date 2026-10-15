@@ -64,7 +64,7 @@ export type MarkdownWithFrontMatter = {
 	notionPageUrl?: string;
 	notionLastEditedTime?: string;
 	obsidianLastSyncedAt?: string;
-	tags?: string[];
+	tags?: string | string[];
 };
 
 export type ServiceResult<T = unknown> = {

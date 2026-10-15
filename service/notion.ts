@@ -560,7 +560,8 @@ const SELECT_OPTION_ALIASES: Record<string, Record<string, string>> = {
 
 /** Convert the supported Obsidian fields into Notion page property values. */
 export const mapFrontmatterToNotionProperties = (
-	frontMatter: MarkdownWithFrontMatter
+	frontMatter: MarkdownWithFrontMatter,
+	allowTags = false
 ): Record<string, unknown> => {
 	const properties: Record<string, unknown> = {};
 
@@ -592,6 +593,25 @@ export const mapFrontmatterToNotionProperties = (
 		}
 	}
 
+	if (
+		allowTags &&
+		Object.prototype.hasOwnProperty.call(frontMatter, "tags")
+	) {
+		const tags = frontMatter.tags;
+		if (typeof tags === "string") {
+			properties.tags = {
+				multi_select: tags ? [{ name: tags }] : [],
+			};
+		} else if (
+			Array.isArray(tags) &&
+			tags.every((tag) => typeof tag === "string")
+		) {
+			properties.tags = {
+				multi_select: tags.map((tag) => ({ name: tag })),
+			};
+		}
+	}
+
 	return properties;
 };
 
@@ -600,7 +620,10 @@ const updatePageProperties = async (
 	notionPageId: string,
 	frontMatter: MarkdownWithFrontMatter
 ): Promise<ServiceResult> => {
-	const properties = mapFrontmatterToNotionProperties(frontMatter);
+	const properties = mapFrontmatterToNotionProperties(
+		frontMatter,
+		settings.allowTags
+	);
 	if (Object.keys(properties).length === 0) {
 		return { data: null, error: null };
 	}
@@ -749,10 +772,10 @@ const createDatabase = async (
 		parent: { type: "page_id", page_id: parentPageId },
 		title: [{ type: "text", text: { content: title } }],
 		properties: {
-			// "Name" is the title column uploads write to; "Tags" backs the
-			// optional Convert tags setting.
+			// "Name" is the title column uploads write to; lowercase "tags"
+			// backs the optional Convert tags setting.
 			Name: { title: {} },
-			Tags: { multi_select: {} },
+			tags: { multi_select: {} },
 		},
 	};
 
@@ -788,7 +811,7 @@ const createEmptyPage = async (
 			Name: {
 				title: [{ text: { content: title } }],
 			},
-			Tags: {
+			tags: {
 				multi_select:
 					allowTags && tags ? tags.map((tag) => ({ name: tag })) : [],
 			},

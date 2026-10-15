@@ -86,6 +86,7 @@ describe("uploadFile frontmatter properties", () => {
 	it("updates mapped properties on the existing notionPageId during Push", async () => {
 		jest.clearAllMocks();
 		const pluginMock = new NObsidian(new App(), {} as PluginManifest);
+		pluginMock.settings.allowTags = true;
 		const fileMock = new TFile();
 		fileMock.basename = "Mapped note";
 		(pluginMock.getContent as jest.Mock).mockResolvedValueOnce({
@@ -93,6 +94,7 @@ describe("uploadFile frontmatter properties", () => {
 			notionPageId: "existing-page-id",
 			language: "en",
 			community_publish: true,
+			tags: ["engineering", "how-to"],
 		});
 		(notion.updatePageProperties as jest.Mock).mockResolvedValueOnce({
 			data: null,
@@ -121,6 +123,7 @@ describe("uploadFile frontmatter properties", () => {
 				notionPageId: "existing-page-id",
 				language: "en",
 				community_publish: true,
+				tags: ["engineering", "how-to"],
 			})
 		);
 		expect(notion.createEmptyPage).not.toHaveBeenCalled();
